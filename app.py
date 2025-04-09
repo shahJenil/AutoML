@@ -7,7 +7,7 @@ import seaborn as sns
 from streamlit_pandas_profiling import st_profile_report
 
 from ydata_profiling import ProfileReport
-from pycaret.classification import setup, compare_models, pull, save_model, plot_model
+from pycaret.regression import setup, compare_models, pull, save_model, plot_model
 import plotly.express as px
 import plotly.graph_objects as go
 
@@ -150,30 +150,38 @@ elif choice == "Profiling":
                     stats = col_data.describe().to_frame().T
                     st.dataframe(stats)
 
-                    value_counts = col_data.value_counts().sort_index().reset_index()
-                    value_counts.columns = [selected_column, "Count"]
-
-                    # Create line chart with markers
-                    fig = go.Figure()
-                    fig.add_trace(
-                        go.Scatter(
-                            x=value_counts[selected_column],
-                            y=value_counts["Count"],
-                            mode="lines+markers",
-                            name=f"Distribution of {selected_column}",
-                            line=dict(shape="spline", smoothing=1.3, width=2),
-                            marker=dict(size=8),
-                        )
+                    # Create histogram
+                    fig_hist = px.histogram(
+                        df,
+                        x=selected_column,
+                        nbins=None,  # Let Plotly auto-determine the number of bins
+                        title=f"Distribution of {selected_column}",
+                        labels={selected_column: selected_column, "count": "Count"},
+                        marginal="rug",  # Optional: adds a rug plot to show individual data points
                     )
 
-                    fig.update_layout(
-                        title=f"Distribution of {selected_column}",
+                    fig_hist.update_layout(
                         xaxis_title=selected_column,
                         yaxis_title="Count",
-                        hovermode="closest",
+                        bargap=0.2,  # Adds a small gap between bars for clarity
+                        hovermode="x unified",  # Shows hover info for all bars at a given x-value
                     )
 
-                    st.plotly_chart(fig, use_container_width=True)
+                    st.plotly_chart(fig_hist, use_container_width=True)
+
+                    # Create box plot
+                    fig_box = px.box(
+                        df,
+                        y=selected_column,
+                        title=f"Box Plot of {selected_column}",
+                        points="outliers",  # Show outliers as individual points
+                    )
+
+                    fig_box.update_layout(
+                        yaxis_title=selected_column,
+                    )
+
+                    st.plotly_chart(fig_box, use_container_width=True)
 
                     Q1 = col_data.quantile(0.25)
                     Q3 = col_data.quantile(0.75)
@@ -268,24 +276,77 @@ elif choice == "Profiling":
                 st.subheader("Correlation Table")
                 st.dataframe(correlation.style.background_gradient(cmap="coolwarm"))
 
-                st.subheader("Scatter Plot")
-                col1, col2 = st.columns(2)
+                st.subheader("Bubble Chart")
+                col1, col2, col3 = st.columns(3)
                 with col1:
                     x_col = st.selectbox("X-axis:", numeric_cols)
                 with col2:
                     y_col = st.selectbox(
                         "Y-axis:", [c for c in numeric_cols if c != x_col], index=0
                     )
+                with col3:
+                    size_col = st.selectbox(
+                        "Bubble Size:",
+                        [c for c in numeric_cols if c != x_col and c != y_col],
+                        index=0,
+                    )
 
-                if x_col != y_col:
+                # Downsampling controls
+                max_points = min(
+                    1000, len(df)
+                )  # Default max to 1000 or dataset size if smaller
+                sample_size = st.slider(
+                    "Number of points to display:",
+                    min_value=50,
+                    max_value=len(df),
+                    value=max_points,
+                    step=50,
+                    help="Reduce the number of points to prevent overlap while preserving distribution.",
+                )
+
+                if x_col != y_col and x_col != size_col and y_col != size_col:
+                    # Downsample the data while maintaining distribution
+                    if sample_size < len(df):
+                        df_sampled = df.sample(
+                            n=sample_size, random_state=42
+                        )  # Fixed seed for reproducibility
+                        st.info(
+                            f"Downsampled to {sample_size} points from {len(df)} total points."
+                        )
+                    else:
+                        df_sampled = (
+                            df  # Use full dataset if sample size >= dataset size
+                        )
+
                     fig = px.scatter(
-                        df,
+                        df_sampled,
                         x=x_col,
                         y=y_col,
-                        title=f"{x_col} vs {y_col}",
-                        trendline="ols",
+                        size=df_sampled[
+                            size_col
+                        ].abs(),  # Ensure positive values for size
+                        title=f"{x_col} vs {y_col} (Bubble Size: {size_col})",
+                        hover_data=[size_col],  # Show size value on hover
+                        size_max=30,  # Reasonable max size
                     )
+
+                    fig.update_traces(
+                        marker=dict(
+                            line=dict(width=0.5, color="DarkSlateGrey")
+                        ),  # Thin border for clarity
+                    )
+
+                    fig.update_layout(
+                        xaxis_title=x_col,
+                        yaxis_title=y_col,
+                        showlegend=False,  # Remove legend since size is self-explanatory
+                    )
+
                     st.plotly_chart(fig, use_container_width=True)
+                else:
+                    st.warning(
+                        "Please select three different columns for X-axis, Y-axis, and Bubble Size."
+                    )
 
 # Models page
 elif choice == "Models":
